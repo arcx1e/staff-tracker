@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Staff Tracker</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card: #161b22;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #3b82f6;
+      --danger: #ef4444;
+      font-family: 'Inter', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); padding: 24px; }
+    .app-container { max-width: 1200px; margin: 0 auto; }
+    .app-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+    h1 { font-size: 24px; }
+    .header-actions button, .filters select {
+      margin-left: 8px;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: none;
+      background: var(--card);
+      color: var(--text);
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    .header-actions button:hover, .filters select:hover { background: var(--accent); color: white; }
+    table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.4); margin-top: 12px; }
+    thead { background: rgba(255,255,255,0.05); }
+    th, td { padding: 14px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    td input[type="text"], td input[type="number"] {
+      background: transparent; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 6px; color: var(--text); width: 100%;
+    }
+    td input[type="checkbox"] { transform: scale(1.2); }
+    tr.loa-row { background: rgba(59,130,246,0.12); }
+    .actions button { margin-right: 6px; padding: 6px 10px; border: none; border-radius: 6px; cursor: pointer; }
+    .actions .remove-btn { background: var(--danger); color: white; }
+    .actions .remove-btn:hover { opacity: 0.85; }
+    footer { text-align: center; margin-top: 16px; color: var(--muted); }
+    .filters { margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <h1>Staff Tracker</h1>
+      <div class="header-actions">
+        <button id="add-user-btn">+ Add User</button>
+        <button id="add-week-btn">+ Add Week</button>
+        <button id="save-btn">💾 Save</button>
+        <button id="load-btn">📂 Load</button>
+        <button id="export-btn">⬇ Export CSV</button>
+      </div>
+    </header>
+
+    <div class="filters">
+      <label>Filter: 
+        <select id="filter-select">
+          <option value="all">All</option>
+          <option value="loa">On LOA</option>
+          <option value="strikes">Has Strikes</option>
+        </select>
+      </label>
+      <label>Sort: 
+        <select id="sort-select">
+          <option value="none">None</option>
+          <option value="strikes-desc">Strikes (High → Low)</option>
+          <option value="strikes-asc">Strikes (Low → High)</option>
+          <option value="username">Username (A–Z)</option>
+        </select>
+      </label>
+    </div>
+
+    <main>
+      <table id="staff-table">
+        <thead>
+          <tr id="header-row">
+            <th>Username</th>
+            <th>User ID</th>
+            <th>LOA</th>
+            <th>Strikes</th>
+            <!-- Weeks go here -->
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="staff-body"></tbody>
+      </table>
+    </main>
+
+    <footer>
+      <small>Staff Tracker • Inline editing • Filters & Sorting • Local save</small>
+    </footer>
+  </div>
+
+  <script>
+    const STATE_KEY = 'staff_tracker_state_v3';
+    let state = { weeks: [], users: [] };
+
+    const staffBody = document.getElementById('staff-body');
+    const headerRow = document.getElementById('header-row');
+    const filterSelect = document.getElementById('filter-select');
+    const sortSelect = document.getElementById('sort-select');
+
+    function uid(){ return 'u'+Math.random().toString(36).slice(2,9) }
+
+    function render(){
+      // clear week headers
+      headerRow.querySelectorAll('.week-th').forEach(th=>th.remove());
+
+      // add week headers
+      state.weeks.forEach(week=>{
+        const th = document.createElement('th');
+        th.className = 'week-th';
+        th.textContent = week;
+        headerRow.insertBefore(th, headerRow.lastElementChild);
+      });
+
+      // filter
+      let filtered = [...state.users];
+      if(filterSelect.value==='loa'){ filtered = filtered.filter(u=>u.loa); }
+      if(filterSelect.value==='strikes'){ filtered = filtered.filter(u=>(u.strikes||0)>0); }
+
+      // sort
+      if(sortSelect.value==='strikes-desc'){ filtered.sort((a,b)=>(b.strikes||0)-(a.strikes||0)); }
+      if(sortSelect.value==='strikes-asc'){ filtered.sort((a,b)=>(a.strikes||0)-(b.strikes||0)); }
+      if(sortSelect.value==='username'){ filtered.sort((a,b)=>a.username.localeCompare(b.username)); }
+
+      staffBody.innerHTML='';
+      filtered.forEach(user=>{
+        const tr=document.createElement('tr');
+        tr.className = user.loa?'loa-row':'';
+        tr.dataset.id=user.id;
+
+        // Username
+        const tdName=document.createElement('td');
+        const inpName=document.createElement('input');
+        inpName.type='text'; inpName.value=user.username;
+        inpName.addEventListener('change',()=>{user.username=inpName.value; saveToLocal();});
+        tdName.appendChild(inpName);
+
+        // User ID
+        const tdUID=document.createElement('td');
+        const inpUID=document.createElement('input');
+        inpUID.type='text'; inpUID.value=user.userid;
+        inpUID.addEventListener('change',()=>{user.userid=inpUID.value; saveToLocal();});
+        tdUID.appendChild(inpUID);
+
+        // LOA
+        const tdLOA=document.createElement('td');
+        const cb=document.createElement('input');
+        cb.type='checkbox'; cb.checked=user.loa;
+        cb.addEventListener('change',()=>{user.loa=cb.checked; render(); saveToLocal();});
+        tdLOA.appendChild(cb);
+
+        // Strikes
+        const tdStr=document.createElement('td');
+        const inpStr=document.createElement('input');
+        inpStr.type='number'; inpStr.min=0; inpStr.value=user.strikes||0;
+        inpStr.addEventListener('change',()=>{user.strikes=Number(inpStr.value||0); saveToLocal();});
+        tdStr.appendChild(inpStr);
+
+        tr.appendChild(tdName); tr.appendChild(tdUID); tr.appendChild(tdLOA); tr.appendChild(tdStr);
+
+        // Weeks
+        state.weeks.forEach(week=>{
+          const td=document.createElement('td');
+          const inp=document.createElement('input');
+          inp.type='number'; inp.min=0; inp.value=(user.invites&&user.invites[week]!=null)?user.invites[week]:0;
+          inp.addEventListener('change',()=>{user.invites=user.invites||{}; user.invites[week]=Number(inp.value||0); saveToLocal();});
+          td.appendChild(inp); tr.appendChild(td);
+        });
+
+        // Actions
+        const tdAct=document.createElement('td'); tdAct.className='actions';
+        const rem=document.createElement('button'); rem.className='remove-btn'; rem.textContent='Remove';
+        rem.addEventListener('click',()=>{
+          if(confirm('Remove this user?')){ state.users=state.users.filter(u=>u.id!==user.id); saveToLocal(); render(); }
+        });
+        tdAct.appendChild(rem); tr.appendChild(tdAct);
+
+        staffBody.appendChild(tr);
+      });
+    }
+
+    function addUser(){
+      state.users.push({id:uid(), username:'', userid:'', loa:false, strikes:0, invites:{}});
+      saveToLocal(); render();
+    }
+    function addWeek(){
+      const label=prompt('Enter week label (e.g., Sept 1-7):');
+      if(label && !state.weeks.includes(label)){
+        state.weeks.push(label);
+        state.users.forEach(u=>{u.invites=u.invites||{}; u.invites[label]=0;});
+        saveToLocal(); render();
+      }
+    }
+    function exportCSV(){
+      const headers=['Username','User ID','LOA','Strikes',...state.weeks];
+      const rows=state.users.map(u=>{
+        const row=[u.username,u.userid,u.loa?'YES':'',u.strikes||0];
+        state.weeks.forEach(w=>row.push((u.invites&&u.invites[w]!=null)?u.invites[w]:0));
+        return row;
+      });
+      const csv=[headers.join(','),...rows.map(r=>r.join(','))].join('\n');
+      const blob=new Blob([csv],{type:'text/csv'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a'); a.href=url; a.download='staff-tracker.csv'; a.click(); URL.revokeObjectURL(url);
+    }
+    function saveToLocal(){ localStorage.setItem(STATE_KEY, JSON.stringify(state)); }
+    function loadFromLocal(){ const raw=localStorage.getItem(STATE_KEY); if(raw) state=JSON.parse(raw); }
+
+    function init(){
+      loadFromLocal(); render();
+      document.getElementById('add-user-btn').addEventListener('click',addUser);
+      document.getElementById('add-week-btn').addEventListener('click',addWeek);
+      document.getElementById('save-btn').addEventListener('click',()=>{saveToLocal();alert('Saved!');});
+      document.getElementById('load-btn').addEventListener('click',()=>{loadFromLocal();render();alert('Loaded!');});
+      document.getElementById('export-btn').addEventListener('click',exportCSV);
+      filterSelect.addEventListener('change',render);
+      sortSelect.addEventListener('change',render);
+    }
+    init();
+  </script>
+</body>
+</html>
